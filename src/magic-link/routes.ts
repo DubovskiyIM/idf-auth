@@ -13,6 +13,9 @@ import { limitByEmail } from '../rate-limit/middleware.js';
 const IssueSchema = z.object({
   email: z.string().email().transform(s => s.toLowerCase()),
   domainSlug: z.string().regex(/^[a-z0-9-]+$/).optional(),
+  // cross-plane login flow: control-plane передаёт сюда свой /api/auth/callback
+  // auth-plane пробрасывает его в email-link, callback делает 302 с jwt+email в query
+  redirectTo: z.string().url().optional(),
 });
 
 export type MagicLinkRouterDeps = {
@@ -35,14 +38,16 @@ export function createMagicLinkRouter(deps: MagicLinkRouterDeps): Router {
       if (!parsed.success) {
         return res.status(400).json({ error: 'invalid_request', details: parsed.error.issues });
       }
-      const { email, domainSlug } = parsed.data;
+      const { email, domainSlug, redirectTo } = parsed.data;
       const nonce = generateNonce();
       const nonceHash = await hashNonce(nonce);
       const expiresAt = new Date(Date.now() + deps.ttlMinutes * 60 * 1000);
 
       await deps.db.insert(magicLinks).values({ nonceHash, email, domainSlug, expiresAt });
 
-      const link = `${deps.baseUrl}/magic-link/callback?token=${encodeURIComponent(nonce)}`;
+      const qs = new URLSearchParams({ token: nonce });
+      if (redirectTo) qs.set('redirectTo', redirectTo);
+      const link = `${deps.baseUrl}/magic-link/callback?${qs.toString()}`;
       await deps.email.sendMagicLink(email, link);
 
       res.json({ status: 'sent' });
@@ -83,6 +88,19 @@ export function createMagicLinkRouter(deps: MagicLinkRouterDeps): Router {
       const memberships = rows.map((r) => ({ domainSlug: r.domainSlug, role: r.role }));
 
       const jwt = await issueJwt(deps.keys, { sub: user.id, memberships, ttlDays: deps.jwtTtlDays });
+
+      // cross-plane flow: если studio передал redirectTo — отдаём 302 на свой callback
+      const redirectTo = String(req.query.redirectTo ?? '');
+      if (redirectTo) {
+        try {
+          const u = new URL(redirectTo);
+          u.searchParams.set('jwt', jwt);
+          u.searchParams.set('email', user.email);
+          return res.redirect(u.toString());
+        } catch {
+          // невалидный URL — возвращаем JSON как дефолт
+        }
+      }
 
       res.json({ jwt, user: { id: user.id, email: user.email }, memberships });
     } catch (e) {
