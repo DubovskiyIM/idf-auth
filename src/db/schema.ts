@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, boolean, index, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, boolean, index, uniqueIndex, integer, bigint } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 export const users = pgTable(
@@ -73,7 +73,7 @@ export const rateLimitLog = pgTable(
   'rate_limit_log',
   {
     key: text('key').primaryKey(),
-    points: text('points').notNull(),
-    expiresAt: timestamp('expires_at').notNull(),
+    points: integer('points').notNull().default(0),
+    expire: bigint('expire', { mode: 'number' }),
   }
 );
