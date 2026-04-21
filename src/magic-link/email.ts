@@ -23,20 +23,22 @@ export function createEmailSender(env: Env): EmailSender {
 
   return {
     async sendMagicLink(to, link) {
-      await resend.emails.send({
+      const { error } = await resend.emails.send({
         from: 'IDF <no-reply@idf.dev>',
         to,
         subject: 'Ваша ссылка для входа',
-        html: `<p>Нажмите чтобы войти: <a href="${link}">${link}</a></p><p>Ссылка действует 15 минут.</p>`,
+        html: `<p>Нажмите чтобы войти: <a href="${link}">${link}</a></p><p>Ссылка действует ${env.MAGIC_LINK_TTL_MINUTES} минут.</p>`,
       });
+      if (error) throw new Error(`Resend send failed: ${error.message}`);
     },
     async sendInvite(to, link, inviter, slug) {
-      await resend.emails.send({
+      const { error } = await resend.emails.send({
         from: 'IDF <no-reply@idf.dev>',
         to,
         subject: `${inviter} приглашает вас в ${slug}`,
         html: `<p>${inviter} приглашает в приложение <b>${slug}</b>.</p><p><a href="${link}">Принять приглашение</a></p>`,
       });
+      if (error) throw new Error(`Resend send failed: ${error.message}`);
     },
   };
 }
