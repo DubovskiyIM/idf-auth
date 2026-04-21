@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
+import type { RateLimiterPostgres } from 'rate-limiter-flexible';
 import { generateNonce, hashNonce } from './nonce.js';
 import { magicLinks, users } from '../db/schema.js';
 import type { DB } from '../db/client.js';
 import type { EmailSender } from './email.js';
 import type { JwtKeys } from '../jwt/keys.js';
 import { issueJwt } from '../jwt/issue.js';
+import { limitByEmail } from '../rate-limit/middleware.js';
 
 const IssueSchema = z.object({
   email: z.string().email().transform(s => s.toLowerCase()),
@@ -20,12 +22,14 @@ export type MagicLinkRouterDeps = {
   baseUrl: string;
   ttlMinutes: number;
   jwtTtlDays: number;
+  limiter?: RateLimiterPostgres;
 };
 
 export function createMagicLinkRouter(deps: MagicLinkRouterDeps): Router {
   const router = Router();
 
-  router.post('/magic-link', async (req, res, next) => {
+  const mwares = deps.limiter ? [limitByEmail(deps.limiter)] : [];
+  router.post('/magic-link', ...mwares, async (req, res, next) => {
     try {
       const parsed = IssueSchema.safeParse(req.body);
       if (!parsed.success) {

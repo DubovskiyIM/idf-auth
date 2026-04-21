@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { eq, sql } from 'drizzle-orm';
+import type { RateLimiterPostgres } from 'rate-limiter-flexible';
 import { invites, users, memberships } from '../db/schema.js';
 import { generateNonce, hashNonce } from '../magic-link/nonce.js';
 import { verifyTenantRequest } from './hmac.js';
 import { issueJwt } from '../jwt/issue.js';
+import { limitByIp } from '../rate-limit/middleware.js';
 import type { DB } from '../db/client.js';
 import type { JwtKeys } from '../jwt/keys.js';
 import type { EmailSender } from '../magic-link/email.js';
@@ -24,12 +26,14 @@ export type InvitesRouterDeps = {
   baseUrl: string;
   ttlHours: number;
   jwtTtlDays: number;
+  limiter?: RateLimiterPostgres;
 };
 
 export function createInvitesRouter(deps: InvitesRouterDeps): Router {
   const router = Router();
 
-  router.post('/invites', async (req: any, res, next) => {
+  const mwares = deps.limiter ? [limitByIp(deps.limiter)] : [];
+  router.post('/invites', ...mwares, async (req: any, res, next) => {
     try {
       const ts = Number(req.get('x-idf-ts') ?? '0');
       const sig = req.get('x-idf-sig') ?? '';

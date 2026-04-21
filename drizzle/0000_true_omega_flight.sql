@@ -31,12 +31,6 @@ CREATE TABLE "memberships" (
 	"created_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "rate_limit_log" (
-	"key" text PRIMARY KEY NOT NULL,
-	"points" integer DEFAULT 0 NOT NULL,
-	"expire" bigint
-);
---> statement-breakpoint
 CREATE TABLE "users" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"email" text NOT NULL,
