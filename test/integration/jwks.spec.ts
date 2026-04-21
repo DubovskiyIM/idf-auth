@@ -32,4 +32,18 @@ describe('GET /.well-known/jwks.json', () => {
     const res = await request(app).get('/.well-known/jwks.json');
     expect(res.headers['cache-control']).toMatch(/max-age=\d+/);
   });
+
+  it('contains RSA public key material (n + e)', async () => {
+    const res = await request(app).get('/.well-known/jwks.json');
+    expect(res.body.keys[0]).toHaveProperty('n');
+    expect(res.body.keys[0]).toHaveProperty('e');
+  });
+
+  it('does not leak private key material', async () => {
+    const res = await request(app).get('/.well-known/jwks.json');
+    const jwk = res.body.keys[0];
+    for (const field of ['d', 'p', 'q', 'dp', 'dq', 'qi']) {
+      expect(jwk).not.toHaveProperty(field);
+    }
+  });
 });
