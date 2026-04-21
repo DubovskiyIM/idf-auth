@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { generateNonce, hashNonce } from './nonce.js';
-import { magicLinks, users, memberships } from '../db/schema.js';
+import { magicLinks, users } from '../db/schema.js';
 import type { DB } from '../db/client.js';
 import type { EmailSender } from './email.js';
 import type { JwtKeys } from '../jwt/keys.js';
@@ -47,6 +47,44 @@ export function createMagicLinkRouter(deps: MagicLinkRouterDeps): Router {
     }
   });
 
-  // GET /magic-link/callback — добавится в Task 13
+  router.get('/magic-link/callback', async (req, res, next) => {
+    try {
+      const tokenParam = String(req.query.token ?? '');
+      if (!tokenParam) return res.status(400).json({ error: 'missing_token' });
+
+      const nonceHash = await hashNonce(tokenParam);
+      const row = await deps.db.query.magicLinks.findFirst({
+        where: (t, { eq }) => eq(t.nonceHash, nonceHash),
+      });
+
+      if (!row) return res.status(400).json({ error: 'unknown_token' });
+      if (row.usedAt) return res.status(400).json({ error: 'already_used' });
+      if (row.expiresAt.getTime() < Date.now()) return res.status(400).json({ error: 'expired' });
+
+      await deps.db.update(magicLinks).set({ usedAt: new Date() }).where(eq(magicLinks.id, row.id));
+
+      let user = await deps.db.query.users.findFirst({
+        where: (u, { sql }) => sql`lower(${u.email}) = ${row.email.toLowerCase()}`,
+      });
+      if (!user) {
+        const [inserted] = await deps.db.insert(users).values({ email: row.email }).returning();
+        user = inserted;
+      } else {
+        await deps.db.update(users).set({ lastActiveAt: new Date() }).where(eq(users.id, user.id));
+      }
+
+      const rows = await deps.db.query.memberships.findMany({
+        where: (m, { and, eq }) => and(eq(m.userId, user!.id), eq(m.revoked, false)),
+      });
+      const memberships = rows.map((r) => ({ domainSlug: r.domainSlug, role: r.role }));
+
+      const jwt = await issueJwt(deps.keys, { sub: user.id, memberships, ttlDays: deps.jwtTtlDays });
+
+      res.json({ jwt, user: { id: user.id, email: user.email }, memberships });
+    } catch (e) {
+      next(e);
+    }
+  });
+
   return router;
 }
