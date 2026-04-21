@@ -18,4 +18,27 @@ describe('jwt keys', () => {
     expect(keys.publicKey).toBeTruthy();
     expect(keys.privateKey).toBeTruthy();
   });
+
+  it('kid детерминирован для одинакового pubkey', async () => {
+    const { generateKeyPair, exportSPKI, exportPKCS8 } = await import('jose');
+    const { publicKey, privateKey } = await generateKeyPair('RS256', { extractable: true });
+    const pubPem = await exportSPKI(publicKey);
+    const privPem = await exportPKCS8(privateKey);
+    const a = await loadKeys(pubPem, privPem);
+    const b = await loadKeys(pubPem, privPem);
+    expect(a.kid).toBe(b.kid);
+  });
+
+  it('разные keypair → разные kid', async () => {
+    const { generateKeyPair, exportSPKI, exportPKCS8 } = await import('jose');
+    const kp1 = await generateKeyPair('RS256', { extractable: true });
+    const kp2 = await generateKeyPair('RS256', { extractable: true });
+    const k1 = await loadKeys(await exportSPKI(kp1.publicKey), await exportPKCS8(kp1.privateKey));
+    const k2 = await loadKeys(await exportSPKI(kp2.publicKey), await exportPKCS8(kp2.privateKey));
+    expect(k1.kid).not.toBe(k2.kid);
+  });
+
+  it('падает на некорректном PEM', async () => {
+    await expect(loadKeys('garbage', 'nonsense')).rejects.toThrow();
+  });
 });

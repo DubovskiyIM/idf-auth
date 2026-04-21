@@ -2,8 +2,8 @@ import { z } from 'zod';
 
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
-  JWT_PRIVATE_KEY_PEM: z.string().min(1),
-  JWT_PUBLIC_KEY_PEM: z.string().min(1),
+  JWT_PRIVATE_KEY_PEM: z.string().min(1).transform(s => s.replace(/\\n/g, '\n')),
+  JWT_PUBLIC_KEY_PEM: z.string().min(1).transform(s => s.replace(/\\n/g, '\n')),
   TENANT_HMAC_SECRET: z.string().min(32),
   RESEND_API_KEY: z.string().min(1),
   APP_BASE_URL: z.string().url(),

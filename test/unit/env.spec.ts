@@ -33,4 +33,31 @@ describe('env', () => {
       })
     ).toThrow(/TENANT_HMAC_SECRET/);
   });
+
+  it('декодирует \\n в JWT_*_PEM для one-line storage в .env/Fly secrets', () => {
+    const env = loadEnv({
+      DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
+      JWT_PRIVATE_KEY_PEM: '-----BEGIN PRIVATE KEY-----\\nLINE1\\nLINE2\\n-----END PRIVATE KEY-----\\n',
+      JWT_PUBLIC_KEY_PEM: '-----BEGIN PUBLIC KEY-----\\nLINE1\\n-----END PUBLIC KEY-----\\n',
+      TENANT_HMAC_SECRET: 'a'.repeat(32),
+      RESEND_API_KEY: 'x',
+      APP_BASE_URL: 'http://localhost:4000',
+    });
+    expect(env.JWT_PRIVATE_KEY_PEM).toContain('\n'); // real newline
+    expect(env.JWT_PRIVATE_KEY_PEM).not.toContain('\\n'); // no literal backslash-n
+    expect(env.JWT_PUBLIC_KEY_PEM.split('\n')).toHaveLength(4); // header + LINE1 + footer + trailing
+  });
+
+  it('raw multiline PEM не ломается (идемпотентность)', () => {
+    const multilinePem = '-----BEGIN PUBLIC KEY-----\nABC\n-----END PUBLIC KEY-----\n';
+    const env = loadEnv({
+      DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
+      JWT_PRIVATE_KEY_PEM: multilinePem,
+      JWT_PUBLIC_KEY_PEM: multilinePem,
+      TENANT_HMAC_SECRET: 'a'.repeat(32),
+      RESEND_API_KEY: 'x',
+      APP_BASE_URL: 'http://localhost:4000',
+    });
+    expect(env.JWT_PRIVATE_KEY_PEM).toBe(multilinePem);
+  });
 });
