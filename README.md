@@ -6,10 +6,11 @@ Identity plane для IDF SaaS. Выдаёт JWT (RS256) по magic-link, при
 
 ## Local dev
 
+После реализации Task 2:
 ```bash
 cp .env.example .env
 npm install
 npm run dev
 ```
 
-(Details будут добавлены по мере реализации.)
+(В текущей итерации — bootstrap package, `.env.example` появится с Task 2.)
