@@ -1,6 +1,13 @@
 import { RateLimiterPostgres } from 'rate-limiter-flexible';
 import type pg from 'pg';
 import type { Request, Response, NextFunction } from 'express';
+import { logger } from '../logger.js';
+
+// cb нужен чтобы RateLimiterPostgres не делал `throw err` в Promise.catch
+// при неудаче CREATE TABLE (bad DB URL, DNS flap) — иначе unhandled rejection крашит процесс.
+function onInit(err?: Error) {
+  if (err) logger.error({ err }, 'rate-limit init failed');
+}
 
 export function createMagicLinkLimiter(pool: pg.Pool) {
   return new RateLimiterPostgres({
@@ -9,7 +16,7 @@ export function createMagicLinkLimiter(pool: pg.Pool) {
     keyPrefix: 'magic',
     points: 5,
     duration: 3600,
-  });
+  }, onInit);
 }
 
 export function createInviteLimiter(pool: pg.Pool) {
@@ -19,7 +26,7 @@ export function createInviteLimiter(pool: pg.Pool) {
     keyPrefix: 'invite',
     points: 100,
     duration: 3600,
-  });
+  }, onInit);
 }
 
 export function limitByEmail(limiter: RateLimiterPostgres) {
