@@ -2,6 +2,22 @@
 
 **Target:** `auth.intent-design.tech` (Ubuntu 24.04 LTS VPS с ранее настроенными Docker + nginx + certbot). Local Postgres в compose (без Neon).
 
+## Continuous Deploy
+
+Push в `main` → CI passes → `.github/workflows/deploy.yml`:
+
+1. Build `linux/amd64` image, push в `ghcr.io/dubovskiyim/idf-auth:latest` (+ tag по sha)
+2. SSH в VPS → `cd /opt/idf-auth && docker compose pull auth && migrate (если есть scripts/migrate.mjs) && up -d auth` + smoke `/health`
+
+**Manual override:** Actions tab → Deploy → Run workflow.
+
+**One-time setup для CD:**
+
+1. **SSH deploy-key** — тот же что для idf-studio (один ключ на VPS).
+2. **GitHub Secrets** в idf-auth: `VPS_HOST=132.243.17.177`, `VPS_USER=root`, `VPS_SSH_KEY=<private key>`.
+3. **GHCR public**: https://github.com/users/DubovskiyIM/packages/container/idf-auth/settings → Public.
+4. **Compose** `/opt/idf-auth/docker-compose.yml`: `image: ghcr.io/dubovskiyim/idf-auth:latest`.
+
 ## Топология
 
 ```
