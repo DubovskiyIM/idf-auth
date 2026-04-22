@@ -21,7 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
 
-    env:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
