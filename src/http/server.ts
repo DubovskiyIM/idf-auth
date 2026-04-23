@@ -9,6 +9,7 @@ import { createJwksRouter } from '../jwks/routes.js';
 import { createMagicLinkRouter } from '../magic-link/routes.js';
 import { createInvitesRouter } from '../invites/routes.js';
 import { createRevocationRouter } from '../revocation/routes.js';
+import { createAdminRouter } from '../admin/routes.js';
 import { createHealthRouter } from '../health/routes.js';
 import { createMagicLinkLimiter, createInviteLimiter } from '../rate-limit/middleware.js';
 import { errorMiddleware } from './errors.js';
@@ -53,6 +54,14 @@ export async function createServer(env: Env) {
     createRevocationRouter({
       db,
       tenantSecret: env.TENANT_HMAC_SECRET,
+    })
+  );
+  app.use(
+    createAdminRouter({
+      db,
+      keys,
+      tenantSecret: env.TENANT_HMAC_SECRET,
+      jwtTtlDays: env.JWT_TTL_DAYS,
     })
   );
   app.use(errorMiddleware);
