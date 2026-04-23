@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 import { users, memberships } from '../db/schema.js';
 import { verifyTenantRequest } from '../invites/hmac.js';
@@ -95,6 +95,47 @@ export function createAdminRouter(deps: AdminRouterDeps): Router {
       });
 
       res.json({ jwt, memberships: membershipList });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  /**
+   * GET /admin/memberships?domainSlug=X — список members tenant'а для control
+   * plane'а (team management UI). HMAC-signed на query-params + empty body.
+   *
+   * Возвращает active + revoked (для audit); studio фильтрует по нужде.
+   */
+  router.get('/admin/memberships', async (req: any, res, next) => {
+    try {
+      const ts = Number(req.get('x-idf-ts') ?? '0');
+      const sig = req.get('x-idf-sig') ?? '';
+      // GET с query-params — signer должен подписать pathname+search.
+      const path = req.originalUrl;
+      const now = Math.floor(Date.now() / 1000);
+
+      if (!verifyTenantRequest(deps.tenantSecret, 'GET', path, '', ts, sig, now)) {
+        return res.status(401).json({ error: 'bad_signature' });
+      }
+
+      const parsed = z.object({ domainSlug: z.string().regex(/^[a-z0-9-]+$/) }).safeParse(req.query);
+      if (!parsed.success) return res.status(400).json({ error: 'invalid_query' });
+
+      const rows = await deps.db
+        .select({
+          id: memberships.id,
+          userId: memberships.userId,
+          role: memberships.role,
+          revoked: memberships.revoked,
+          createdAt: memberships.createdAt,
+          email: users.email,
+        })
+        .from(memberships)
+        .innerJoin(users, eq(memberships.userId, users.id))
+        .where(eq(memberships.domainSlug, parsed.data.domainSlug))
+        .orderBy(desc(memberships.createdAt));
+
+      res.json({ memberships: rows });
     } catch (e) {
       next(e);
     }
