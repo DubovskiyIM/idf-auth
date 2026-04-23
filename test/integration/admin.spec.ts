@@ -161,4 +161,69 @@ describe('admin memberships', () => {
       .send(raw);
     expect(r.status).toBe(400);
   });
+
+  describe('GET /admin/memberships', () => {
+    function signedGet(domainSlug: string) {
+      const path = `/admin/memberships?domainSlug=${domainSlug}`;
+      const ts = Math.floor(Date.now() / 1000);
+      const sig = signTenantRequest(SECRET, 'GET', path, '', ts);
+      return { path, ts, sig };
+    }
+
+    it('возвращает пустой список для unknown slug', async () => {
+      const { path, ts, sig } = signedGet('nobody');
+      const r = await request(app)
+        .get(path)
+        .set('x-idf-ts', String(ts))
+        .set('x-idf-sig', sig);
+      expect(r.status).toBe(200);
+      expect(r.body.memberships).toEqual([]);
+    });
+
+    it('возвращает members с email + role после upsert', async () => {
+      const upsertSign = (body: object) => {
+        const raw = JSON.stringify(body);
+        const ts = Math.floor(Date.now() / 1000);
+        const sig = signTenantRequest(SECRET, 'POST', '/admin/memberships', raw, ts);
+        return { raw, ts, sig };
+      };
+
+      const alice = upsertSign({ email: 'alice@a.co', domainSlug: 'team', role: 'owner' });
+      const r1 = await request(app)
+        .post('/admin/memberships')
+        .set('x-idf-ts', String(alice.ts))
+        .set('x-idf-sig', alice.sig)
+        .set('content-type', 'application/json')
+        .send(alice.raw);
+      expect(r1.status).toBe(200);
+
+      const bob = upsertSign({ email: 'bob@a.co', domainSlug: 'team', role: 'sdr' });
+      const r2 = await request(app)
+        .post('/admin/memberships')
+        .set('x-idf-ts', String(bob.ts))
+        .set('x-idf-sig', bob.sig)
+        .set('content-type', 'application/json')
+        .send(bob.raw);
+      expect(r2.status).toBe(200);
+
+      const { path, ts, sig } = signedGet('team');
+      const r = await request(app)
+        .get(path)
+        .set('x-idf-ts', String(ts))
+        .set('x-idf-sig', sig);
+
+      expect(r.status).toBe(200);
+      expect(r.body.memberships).toHaveLength(2);
+      const emails = r.body.memberships.map((m: { email: string }) => m.email).sort();
+      expect(emails).toEqual(['alice@a.co', 'bob@a.co']);
+      const bobRow = r.body.memberships.find((m: { email: string }) => m.email === 'bob@a.co');
+      expect(bobRow.role).toBe('sdr');
+      expect(bobRow.revoked).toBe(false);
+    });
+
+    it('GET без подписи → 401', async () => {
+      const r = await request(app).get('/admin/memberships?domainSlug=any');
+      expect(r.status).toBe(401);
+    });
+  });
 });
