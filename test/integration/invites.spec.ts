@@ -110,6 +110,37 @@ describe('invites', () => {
     expect(rows.rowCount).toBe(1);
   });
 
+  it('POST /invites c redirectTo прокидывает его в link, GET /accept делает 302', async () => {
+    const body = {
+      email: 'newbie@acme.com',
+      domainSlug: 'my-app',
+      role: 'viewer',
+      inviterEmail: 'pm@acme.com',
+      redirectTo: 'https://studio.example/api/auth/callback',
+    };
+    const { raw, ts, sig } = signed(body);
+    await request(app)
+      .post('/invites')
+      .set('x-idf-ts', String(ts))
+      .set('x-idf-sig', sig)
+      .set('content-type', 'application/json')
+      .send(raw);
+
+    const url = new URL(outbox[0].link);
+    const token = url.searchParams.get('token')!;
+    const redirectTo = url.searchParams.get('redirectTo')!;
+    expect(redirectTo).toBe('https://studio.example/api/auth/callback');
+
+    const res = await request(app).get(
+      `/invites/accept?token=${encodeURIComponent(token)}&redirectTo=${encodeURIComponent(redirectTo)}`,
+    );
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.location);
+    expect(location.origin + location.pathname).toBe('https://studio.example/api/auth/callback');
+    expect(location.searchParams.get('jwt')).toMatch(/^eyJ/);
+    expect(location.searchParams.get('email')).toBe('newbie@acme.com');
+  });
+
   it('GET /invites/accept rejects used token', async () => {
     const body = { email: 'twice@acme.com', domainSlug: 'x', role: 'y', inviterEmail: 'p@a.co' };
     const { raw, ts, sig } = signed(body);

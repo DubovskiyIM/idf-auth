@@ -16,6 +16,8 @@ const InviteSchema = z.object({
   domainSlug: z.string().regex(/^[a-z0-9-]+$/),
   role: z.string().min(1),
   inviterEmail: z.string().email(),
+  /** Cookie-setter URL в studio/control-plane. После accept'а invitee redirect'ится сюда с JWT в query. */
+  redirectTo: z.string().url().optional(),
 });
 
 export type InvitesRouterDeps = {
@@ -59,7 +61,11 @@ export function createInvitesRouter(deps: InvitesRouterDeps): Router {
         expiresAt,
       });
 
-      const link = `${deps.baseUrl}/invites/accept?token=${encodeURIComponent(nonce)}`;
+      // Если control plane передал redirectTo — прокидываем в link. invites/accept
+      // после нажатия прочитает его из query и сделает 302 на studio cookie-setter.
+      const qs = new URLSearchParams({ token: nonce });
+      if (parsed.data.redirectTo) qs.set('redirectTo', parsed.data.redirectTo);
+      const link = `${deps.baseUrl}/invites/accept?${qs.toString()}`;
       await deps.email.sendInvite(
         parsed.data.email,
         link,
@@ -125,6 +131,23 @@ export function createInvitesRouter(deps: InvitesRouterDeps): Router {
         memberships: allMemberships.map(m => ({ domainSlug: m.domainSlug, role: m.role })),
         ttlDays: deps.jwtTtlDays,
       });
+
+      // Invitee click'ает email-link и должен попасть в studio cookie-setter.
+      // Без redirect'а они получают raw JSON и теряются. Берём redirectTo из
+      // query (studio шлёт его в POST /invites payload → invite link строит
+      // его → возвращает сюда), fallback на APP_BASE_URL (который в prod ==
+      // studio.intent-design.tech).
+      const redirectTo = String(req.query.redirectTo ?? '');
+      if (redirectTo) {
+        try {
+          const u = new URL(redirectTo);
+          u.searchParams.set('jwt', jwt);
+          u.searchParams.set('email', user.email);
+          return res.redirect(u.toString());
+        } catch {
+          // невалидный URL — JSON fallback
+        }
+      }
 
       res.json({ jwt, user: { id: user.id, email: user.email } });
     } catch (e) {
