@@ -226,4 +226,84 @@ describe('admin memberships', () => {
       expect(r.status).toBe(401);
     });
   });
+
+  describe('GET /admin/invites', () => {
+    function signedGet(domainSlug: string) {
+      const path = `/admin/invites?domainSlug=${domainSlug}`;
+      const ts = Math.floor(Date.now() / 1000);
+      const sig = signTenantRequest(SECRET, 'GET', path, '', ts);
+      return { path, ts, sig };
+    }
+
+    beforeEach(async () => {
+      await handle.pool.query('DELETE FROM invites');
+    });
+
+    it('возвращает пустой список для unknown slug', async () => {
+      const { path, ts, sig } = signedGet('nobody');
+      const r = await request(app)
+        .get(path)
+        .set('x-idf-ts', String(ts))
+        .set('x-idf-sig', sig);
+      expect(r.status).toBe(200);
+      expect(r.body.invites).toEqual([]);
+    });
+
+    it('возвращает pending invite с email + role', async () => {
+      await handle.pool.query(
+        `INSERT INTO invites (nonce_hash, email, domain_slug, role, expires_at)
+         VALUES ('hash1', 'pending@a.co', 'team', 'sdr', now() + interval '24 hours')`,
+      );
+
+      const { path, ts, sig } = signedGet('team');
+      const r = await request(app)
+        .get(path)
+        .set('x-idf-ts', String(ts))
+        .set('x-idf-sig', sig);
+
+      expect(r.status).toBe(200);
+      expect(r.body.invites).toHaveLength(1);
+      expect(r.body.invites[0].email).toBe('pending@a.co');
+      expect(r.body.invites[0].role).toBe('sdr');
+    });
+
+    it('фильтрует accepted / revoked / expired', async () => {
+      await handle.pool.query(`
+        INSERT INTO invites (nonce_hash, email, domain_slug, role, expires_at, accepted_at)
+          VALUES ('hash_accepted', 'accepted@a.co', 'team', 'sdr', now() + interval '24 hours', now());
+        INSERT INTO invites (nonce_hash, email, domain_slug, role, expires_at, revoked_at)
+          VALUES ('hash_revoked', 'revoked@a.co', 'team', 'sdr', now() + interval '24 hours', now());
+        INSERT INTO invites (nonce_hash, email, domain_slug, role, expires_at)
+          VALUES ('hash_expired', 'expired@a.co', 'team', 'sdr', now() - interval '1 hour');
+        INSERT INTO invites (nonce_hash, email, domain_slug, role, expires_at)
+          VALUES ('hash_pending', 'pending@a.co', 'team', 'sdr', now() + interval '24 hours');
+      `);
+
+      const { path, ts, sig } = signedGet('team');
+      const r = await request(app)
+        .get(path)
+        .set('x-idf-ts', String(ts))
+        .set('x-idf-sig', sig);
+
+      expect(r.status).toBe(200);
+      expect(r.body.invites).toHaveLength(1);
+      expect(r.body.invites[0].email).toBe('pending@a.co');
+    });
+
+    it('GET без подписи → 401', async () => {
+      const r = await request(app).get('/admin/invites?domainSlug=any');
+      expect(r.status).toBe(401);
+    });
+
+    it('invalid domainSlug → 400', async () => {
+      const path = '/admin/invites?domainSlug=BAD_UPPER';
+      const ts = Math.floor(Date.now() / 1000);
+      const sig = signTenantRequest(SECRET, 'GET', path, '', ts);
+      const r = await request(app)
+        .get(path)
+        .set('x-idf-ts', String(ts))
+        .set('x-idf-sig', sig);
+      expect(r.status).toBe(400);
+    });
+  });
 });

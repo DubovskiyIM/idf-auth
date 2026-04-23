@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, isNull, gt } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
-import { users, memberships } from '../db/schema.js';
+import { users, memberships, invites } from '../db/schema.js';
 import { verifyTenantRequest } from '../invites/hmac.js';
 import { issueJwt } from '../jwt/issue.js';
 import type { DB } from '../db/client.js';
@@ -136,6 +136,52 @@ export function createAdminRouter(deps: AdminRouterDeps): Router {
         .orderBy(desc(memberships.createdAt));
 
       res.json({ memberships: rows });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  /**
+   * GET /admin/invites?domainSlug=X — pending invites (не accept'нутые, не revoked,
+   * не expired) для tenant'а. HMAC-signed по тому же pattern'у, что /admin/memberships.
+   *
+   * Owner не видит list'а «кого пригласил» в UI без этого endpoint'а — после POST
+   * /invites email ушёл, но в tenant manage нет обратной связи до первого accept'а.
+   */
+  router.get('/admin/invites', async (req: any, res, next) => {
+    try {
+      const ts = Number(req.get('x-idf-ts') ?? '0');
+      const sig = req.get('x-idf-sig') ?? '';
+      const path = req.originalUrl;
+      const now = Math.floor(Date.now() / 1000);
+
+      if (!verifyTenantRequest(deps.tenantSecret, 'GET', path, '', ts, sig, now)) {
+        return res.status(401).json({ error: 'bad_signature' });
+      }
+
+      const parsed = z.object({ domainSlug: z.string().regex(/^[a-z0-9-]+$/) }).safeParse(req.query);
+      if (!parsed.success) return res.status(400).json({ error: 'invalid_query' });
+
+      const rows = await deps.db
+        .select({
+          id: invites.id,
+          email: invites.email,
+          role: invites.role,
+          createdAt: invites.createdAt,
+          expiresAt: invites.expiresAt,
+        })
+        .from(invites)
+        .where(
+          and(
+            eq(invites.domainSlug, parsed.data.domainSlug),
+            isNull(invites.acceptedAt),
+            isNull(invites.revokedAt),
+            gt(invites.expiresAt, new Date()),
+          ),
+        )
+        .orderBy(desc(invites.createdAt));
+
+      res.json({ invites: rows });
     } catch (e) {
       next(e);
     }
