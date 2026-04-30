@@ -306,4 +306,108 @@ describe('admin memberships', () => {
       expect(r.status).toBe(400);
     });
   });
+
+  describe('POST /admin/agent-tokens/issue', () => {
+    function signedIssue(body: object) {
+      const raw = JSON.stringify(body);
+      const ts = Math.floor(Date.now() / 1000);
+      const sig = signTenantRequest(SECRET, 'POST', '/admin/agent-tokens/issue', raw, ts);
+      return { raw, ts, sig };
+    }
+
+    it('без HMAC → 401', async () => {
+      const r = await request(app)
+        .post('/admin/agent-tokens/issue')
+        .send({ sub: 'agent:abc12345', domainSlug: 'acme', role: 'agent' });
+      expect(r.status).toBe(401);
+    });
+
+    it('issues JWT с aud=agent + memberships single-slug', async () => {
+      const body = { sub: 'agent:abc12345', domainSlug: 'acme', role: 'agent' };
+      const { raw, ts, sig } = signedIssue(body);
+      const r = await request(app)
+        .post('/admin/agent-tokens/issue')
+        .set('x-idf-ts', String(ts))
+        .set('x-idf-sig', sig)
+        .set('content-type', 'application/json')
+        .send(raw);
+      expect(r.status).toBe(200);
+      expect(r.body.sub).toBe('agent:abc12345');
+      expect(typeof r.body.jwt).toBe('string');
+      expect(r.body.exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
+
+      const claims = await verifyJwt(keys, r.body.jwt);
+      expect(claims.memberships).toEqual([{ domainSlug: 'acme', role: 'agent' }]);
+      expect((claims as { aud?: string | string[] }).aud).toBe('agent');
+      expect(claims.sub).toBe('agent:abc12345');
+    });
+
+    it('default ttl = 365 days', async () => {
+      const body = { sub: 'agent:longlived01', domainSlug: 'acme', role: 'agent' };
+      const { raw, ts, sig } = signedIssue(body);
+      const r = await request(app)
+        .post('/admin/agent-tokens/issue')
+        .set('x-idf-ts', String(ts))
+        .set('x-idf-sig', sig)
+        .set('content-type', 'application/json')
+        .send(raw);
+      expect(r.status).toBe(200);
+      const expectedExp = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
+      // допуск ±10s на test-clock skew
+      expect(Math.abs(r.body.exp - expectedExp)).toBeLessThan(10);
+    });
+
+    it('кастомный ttlDays + preapproval — claims проброшены в JWT', async () => {
+      const body = {
+        sub: 'agent:scoped12',
+        domainSlug: 'acme',
+        role: 'agent',
+        ttlDays: 30,
+        preapproval: { maxAmount: 5000, dailySum: 50000, active: true },
+      };
+      const { raw, ts, sig } = signedIssue(body);
+      const r = await request(app)
+        .post('/admin/agent-tokens/issue')
+        .set('x-idf-ts', String(ts))
+        .set('x-idf-sig', sig)
+        .set('content-type', 'application/json')
+        .send(raw);
+      expect(r.status).toBe(200);
+
+      const claims = await verifyJwt(keys, r.body.jwt) as {
+        preapproval?: Record<string, unknown>;
+      };
+      expect(claims.preapproval).toEqual({ maxAmount: 5000, dailySum: 50000, active: true });
+      // ttl=30 дней
+      const expectedExp = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+      expect(Math.abs(r.body.exp - expectedExp)).toBeLessThan(10);
+    });
+
+    it('invalid body → 400 с issues', async () => {
+      const body = { sub: 'short', domainSlug: 'BAD-CASE', role: '' };
+      const { raw, ts, sig } = signedIssue(body);
+      const r = await request(app)
+        .post('/admin/agent-tokens/issue')
+        .set('x-idf-ts', String(ts))
+        .set('x-idf-sig', sig)
+        .set('content-type', 'application/json')
+        .send(raw);
+      expect(r.status).toBe(400);
+      expect(r.body.error).toBe('invalid_body');
+      expect(Array.isArray(r.body.issues)).toBe(true);
+      expect(r.body.issues.length).toBeGreaterThan(0);
+    });
+
+    it('ttlDays > 3650 (10 лет) — 400', async () => {
+      const body = { sub: 'agent:tooLong01', domainSlug: 'acme', role: 'agent', ttlDays: 99999 };
+      const { raw, ts, sig } = signedIssue(body);
+      const r = await request(app)
+        .post('/admin/agent-tokens/issue')
+        .set('x-idf-ts', String(ts))
+        .set('x-idf-sig', sig)
+        .set('content-type', 'application/json')
+        .send(raw);
+      expect(r.status).toBe(400);
+    });
+  });
 });
