@@ -187,5 +187,81 @@ export function createAdminRouter(deps: AdminRouterDeps): Router {
     }
   });
 
+  /**
+   * POST /admin/agent-tokens/issue — выпуск long-lived JWT для agent.
+   *
+   * Используется control plane'ом (studio) при создании agent-token'а —
+   * отдаёт JWT, который agent (LLM/bot) присылает в Authorization. Studio
+   * хранит метаданные (label, tokenHash, preapprovalJson, revokedAt);
+   * idf-auth — только signing-side (он держит keys + revocation).
+   *
+   * HMAC-signed по той же схеме, что /admin/memberships.
+   *
+   * Body:
+   *   sub: string         — стабильный agent-id (например, `agent:<uuid>`).
+   *                          Он же попадёт в JWT.sub и в audit log как actor.
+   *   domainSlug: string  — tenant slug.
+   *   role: string        — agent-role в ontology (canExecute / preapproval).
+   *   ttlDays?: number    — TTL, default 365.
+   *   preapproval?: object — per-token override поверх ontology preapproval.
+   *
+   * Returns: { jwt, sub, exp } — exp как unix-timestamp для UI.
+   */
+  router.post('/admin/agent-tokens/issue', async (req: any, res, next) => {
+    try {
+      const ts = Number(req.get('x-idf-ts') ?? '0');
+      const sig = req.get('x-idf-sig') ?? '';
+      const raw: string = req.rawBody ?? JSON.stringify(req.body);
+      const now = Math.floor(Date.now() / 1000);
+
+      if (!verifyTenantRequest(deps.tenantSecret, 'POST', '/admin/agent-tokens/issue', raw, ts, sig, now)) {
+        return res.status(401).json({ error: 'bad_signature' });
+      }
+
+      const parsed = AgentTokenIssueSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: 'invalid_body',
+          issues: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        });
+      }
+
+      const ttlDays = parsed.data.ttlDays ?? 365;
+      const sub = parsed.data.sub;
+      const exp = Math.floor(Date.now() / 1000) + ttlDays * 24 * 60 * 60;
+
+      const jwt = await issueJwt(deps.keys, {
+        sub,
+        memberships: [{ domainSlug: parsed.data.domainSlug, role: parsed.data.role }],
+        ttlDays,
+        aud: 'agent',
+        preapproval: parsed.data.preapproval,
+      });
+
+      res.json({ jwt, sub, exp });
+    } catch (e) {
+      next(e);
+    }
+  });
+
   return router;
 }
+
+/**
+ * Зод-схема для /admin/agent-tokens/issue body.
+ *
+ * sub — agent-id, должен быть стабильным (caller storing). Format:
+ * `agent:<token-uuid>` рекомендуется (отличает от обычного user UUID в audit
+ * log как actor).
+ *
+ * preapproval — opaque dict (любые predicate ключи). Не валидируем shape тут,
+ * runtime + SDK preapprovalGuard сами разберутся (active/notExpired/maxAmount/
+ * csvInclude/dailySum).
+ */
+const AgentTokenIssueSchema = z.object({
+  sub: z.string().min(8).max(128),
+  domainSlug: z.string().regex(/^[a-z0-9-]+$/),
+  role: z.string().min(1),
+  ttlDays: z.number().int().min(1).max(3650).optional(),
+  preapproval: z.record(z.unknown()).optional(),
+});
